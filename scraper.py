@@ -13,9 +13,8 @@ GOOGLE_CREDENTIALS_FILE = 'google_secret.json'
 SPREADSHEET_URL = 'https://docs.google.com/spreadsheets/d/1_JbtThIfDSDpKW1gd5jNBFAp6bV0-pVntVJLqNbczIw/edit?gid=0#gid=0' 
 WORKSHEET_NAME = 'Retainers Dashboard' 
 
-# --- ניהול סטטוסים ידני ---
-# הכנס כאן שמות לקוחות כדי למיין ולתייג אותם
-FROZEN_CLIENTS = ['Qubex'] # דוגמה: ['Rotate']
+# --- ניהול סטטוסים ידני (תעדכן כאן שמות בדיוק כמו שהם מופיעים בשיטס) ---
+FROZEN_CLIENTS = [] 
 EXPIRED_CLIENTS = [] 
 
 def get_morning_token():
@@ -29,7 +28,7 @@ def get_morning_token():
 def fetch_morning_data(token):
     url = "https://api.greeninvoice.co.il/api/v1/documents/search"
     headers = {"Authorization": f"Bearer {token}"}
-    # הרחבנו את הסוגים כדי לא לפספס כלום (300, 305, 320, 330, 400)
+    # משכנו את כל הסוגים כדי לוודא ששום דבר מ-2023 לא מתפספס
     payload = {
         "page": 1, "pageSize": 100, "type": [300, 305, 320, 330, 400],
         "date": {"from": "2023-06-01", "to": f"{datetime.now().year}-12-31"}
@@ -41,7 +40,6 @@ def fetch_morning_data(token):
         all_docs.extend(res['items'])
         if res.get('page', 1) >= res.get('pages', 1): break
         payload['page'] += 1
-    print(f"DEBUG: Found {len(all_docs)} documents.")
     return all_docs
 
 def process_data(docs):
@@ -54,10 +52,16 @@ def process_data(docs):
             "Name": client_name,
             "Month": f"{datetime.strptime(doc['documentDate'], '%Y-%m-%d').year}-{datetime.strptime(doc['documentDate'], '%Y-%m-%d').month:02d}-01",
             "Amount": doc.get('amount', 0),
-            "Currency": doc.get('currency', 'ILS')
+            "Currency": doc.get('currency', 'ILS'),
+            "DocType": doc.get('type') # שומרים סוג מסמך לסינון כפילויות
         })
     
     df = pd.DataFrame(doc_data)
+    
+    # --- מנגנון מניעת כפילויות ---
+    # אם יש גם חשבונית (320) וגם קבלה (305/330) על אותו סכום באותו חודש - נשמור רק אחת
+    df = df.sort_values(by=['Name', 'Month', 'Amount', 'DocType'], ascending=[True, True, True, False])
+    df = df.drop_duplicates(subset=['Name', 'Month', 'Amount'], keep='first')
     
     def format_val(row):
         if row['Currency'] == 'USD': return f"${row['Amount']}"
@@ -65,8 +69,10 @@ def process_data(docs):
         return row['Amount']
     
     df['Val'] = df.apply(format_val, axis=1)
+    
+    # יצירת הטבלה
     pivot_df = df.pivot_table(index='Name', columns='Month', values='Val', 
-                              aggfunc=lambda x: ' + '.join(map(str, x)) if len(x) > 1 else x.iloc[0])
+                              aggfunc=lambda x: x.iloc[0]) # לוקחים רק ערך אחד אחרי הסינון
     
     pivot_df = pivot_df.reindex(columns=all_months).fillna("")
     
@@ -95,7 +101,7 @@ def update_google_sheets(df):
     
     worksheet.clear()
     worksheet.update([df.columns.values.tolist()] + df.values.tolist())
-    print(f"Successfully updated {len(df)} rows.")
+    print(f"Update complete. {len(df)} rows processed.")
 
 def main():
     token = get_morning_token()
