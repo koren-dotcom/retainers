@@ -11,7 +11,6 @@ MORNING_ID = os.environ.get('MORNING_ID')
 MORNING_SECRET = os.environ.get('MORNING_SECRET')
 GOOGLE_CREDENTIALS_FILE = 'google_secret.json'
 
-# הלינק המובנה לבקשתך
 SPREADSHEET_URL = 'https://docs.google.com/spreadsheets/d/1_JbtThIfDSDpKW1gd5jNBFAp6bV0-pVntVJLqNbczIw/edit?gid=0#gid=0' 
 WORKSHEET_NAME = 'Retainers Dashboard' 
 
@@ -43,25 +42,36 @@ def fetch_morning_data(token):
 def fetch_retainer_statuses(token):
     url = "https://api.greeninvoice.co.il/api/v1/retainers/search"
     headers = {"Authorization": f"Bearer {token}"}
-    payload = {"page": 1, "pageSize": 100}
+    # בקשה מפורשת למשוך את כל הסטטוסים
+    payload = {
+        "page": 1, 
+        "pageSize": 100,
+        "status": [1, 2, 3] # 1=פעיל, 2=מוקפא, 3=הסתיים
+    }
     statuses = {}
     while True:
-        res = requests.post(url, headers=headers, json=payload).json()
+        response = requests.post(url, headers=headers, json=payload)
+        if response.status_code != 200:
+            print(f"DEBUG API ERROR: {response.text}")
+            break
+            
+        res = response.json()
         items = res.get('items', [])
         for item in items:
             client_name = item.get('client', {}).get('name', '').strip()
             status_code = item.get('status')
             statuses[client_name] = status_code
+            
         if res.get('page', 1) >= res.get('pages', 1): break
         payload['page'] += 1
-    print(f"DEBUG: Found {len(statuses)} retainers in Morning.")
+        
+    # הדפסת השמות שנמצאו כדי שנוכל לראות בדיוק מי אותר
+    print(f"DEBUG: Found {len(statuses)} retainers. Names: {list(statuses.keys())}")
     return statuses
 
 def process_data(docs, statuses):
-    # 1. יצירת ציר זמן מלא מיוני 2023
     all_months = pd.date_range(start="2023-06-01", end=datetime.now(), freq='MS').strftime('%Y-%m-01').tolist()
     
-    # 2. עיבוד מסמכים
     if docs:
         doc_data = []
         for doc in docs:
@@ -84,17 +94,15 @@ def process_data(docs, statuses):
     else:
         pivot_df = pd.DataFrame(index=list(statuses.keys()))
 
-    # 3. איחוד לקוחות (מסמכים + ריטיינרים) כדי לוודא שכולם מופיעים
     all_clients = set(pivot_df.index).union(set(statuses.keys()))
     pivot_df = pivot_df.reindex(index=list(all_clients), columns=all_months).fillna("")
     
-    # 4. הוספת סטטוס ומיון
     status_map = {1: 'פעיל', 2: 'מוקפא', 3: 'הסתיים'}
-    pivot_df.insert(0, 'Status', [status_map.get(statuses.get(name, 0), 'לא מוגדר') for name in pivot_df.index])
+    pivot_df.insert(0, 'Status', [status_map.get(statuses.get(name), 'לא הוגדר') for name in pivot_df.index])
     pivot_df.reset_index(inplace=True)
     pivot_df.rename(columns={'index': 'Name'}, inplace=True)
 
-    rank_map = {'פעיל': 1, 'מוקפא': 2, 'הסתיים': 3, 'לא מוגדר': 4}
+    rank_map = {'פעיל': 1, 'מוקפא': 2, 'הסתיים': 3, 'לא הוגדר': 4}
     pivot_df['rank'] = pivot_df['Status'].map(rank_map)
     pivot_df = pivot_df.sort_values(by=['rank', 'Name']).drop(columns=['rank'])
     
@@ -113,7 +121,6 @@ def update_google_sheets(df):
     worksheet.clear()
     worksheet.update([df.columns.values.tolist()] + df.values.tolist())
     
-    # צביעה - טווח רחב יותר (A עד AZ)
     colors = {
         'פעיל': Color(0.717, 0.882, 0.804),
         'מוקפא': Color(0.956, 0.780, 0.764),
@@ -128,7 +135,7 @@ def update_google_sheets(df):
     
     if fmt_rules:
         batch_format(worksheet, fmt_rules)
-    print(f"DEBUG: Successfully updated {len(df)} rows at {datetime.now()}.")
+    print(f"DEBUG: Successfully updated {len(df)} rows.")
 
 def main():
     token = get_morning_token()
