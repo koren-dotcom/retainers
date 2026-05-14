@@ -10,7 +10,7 @@ MORNING_ID = os.environ.get('MORNING_ID')
 MORNING_SECRET = os.environ.get('MORNING_SECRET')
 GOOGLE_CREDENTIALS_FILE = 'google_secret.json' # בגיטהאב נייצר את זה דינמית, מקומית שים את הקובץ פה
 SPREADSHEET_URL = 'https://docs.google.com/spreadsheets/d/1_JbtThIfDSDpKW1gd5jNBFAp6bV0-pVntVJLqNbczIw/edit?gid=0#gid=0'
-WORKSHEET_NAME = 'דשבורד לקוחות ריטיינר'
+WORKSHEET_NAME = 'Retainers Dashboard'
 
 def get_morning_token():
     url = "https://api.greeninvoice.co.il/api/v1/account/token"
