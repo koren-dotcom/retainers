@@ -14,8 +14,8 @@ SPREADSHEET_URL = 'https://docs.google.com/spreadsheets/d/1_JbtThIfDSDpKW1gd5jNB
 WORKSHEET_NAME = 'Retainers Dashboard' 
 
 # --- ניהול סטטוסים ידני ---
-# הכנס כאן שמות לקוחות בדיוק כפי שהם מופיעים בשיטס
-FROZEN_CLIENTS = [] 
+# פשוט תוסיף כאן שמות לקוחות בתוך הגרשיים
+FROZEN_CLIENTS = ['Qubex'] # דוגמה
 EXPIRED_CLIENTS = [] 
 
 def get_morning_token():
@@ -29,7 +29,6 @@ def get_morning_token():
 def fetch_morning_data(token):
     url = "https://api.greeninvoice.co.il/api/v1/documents/search"
     headers = {"Authorization": f"Bearer {token}"}
-    # חוזרים להגדרות הבסיסיות והבטוחות - מיוני 2024
     payload = {
         "page": 1, "pageSize": 100, "type": [320, 330],
         "date": {"from": "2024-06-01", "to": f"{datetime.now().year}-12-31"}
@@ -60,21 +59,13 @@ def process_data(docs):
     df = pd.DataFrame(doc_data)
     if df.empty: return pd.DataFrame()
 
-    # פורמט מטבע פשוט
-    def format_val(row):
-        if row['Currency'] == 'USD': return f"${row['Amount']}"
-        if row['Currency'] == 'EUR': return f"€{row['Amount']}"
-        return row['Amount']
+    # שימוש במספרים נקיים בלבד כדי למנוע "ערכים לא חוקיים" בשיטס
+    pivot_df = df.pivot_table(index='Name', columns='Month', values='Amount', aggfunc='sum')
     
-    df['Val'] = df.apply(format_val, axis=1)
-    
-    # יצירת טבלה - לוקחים רק ערך אחד כדי למנוע חיבורים כפולים
-    pivot_df = df.pivot_table(index='Name', columns='Month', values='Val', aggfunc='first')
-    
-    # סידור עמודות
+    # סידור עמודות ומילוי תאים ריקים בריק (ולא ב-0)
     pivot_df = pivot_df.reindex(columns=all_months).fillna("")
     
-    # סטטוסים ומיון
+    # הוספת עמודת סטטוס
     def get_status(name):
         if name in FROZEN_CLIENTS: return 'מוקפא'
         if name in EXPIRED_CLIENTS: return 'הסתיים'
@@ -84,6 +75,7 @@ def process_data(docs):
     pivot_df.reset_index(inplace=True)
     pivot_df.rename(columns={'index': 'Name'}, inplace=True)
 
+    # מיון
     rank_map = {'פעיל': 1, 'מוקפא': 2, 'הסתיים': 3}
     pivot_df['rank'] = pivot_df['Status'].map(rank_map)
     pivot_df = pivot_df.sort_values(by=['rank', 'Name']).drop(columns=['rank'])
@@ -98,9 +90,12 @@ def update_google_sheets(df):
     sheet = client.open_by_url(SPREADSHEET_URL)
     worksheet = sheet.worksheet(WORKSHEET_NAME)
     
+    # מחיקת הכל כדי לנקות את עמודה O הבעייתית
     worksheet.clear()
+    
+    # כתיבה מחדש
     worksheet.update([df.columns.values.tolist()] + df.values.tolist())
-    print(f"Successfully updated {len(df)} rows starting from June 2024.")
+    print("Dashboard cleaned and updated.")
 
 def main():
     token = get_morning_token()
