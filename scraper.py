@@ -17,7 +17,18 @@ def get_morning_token():
     payload = {"id": MORNING_ID, "secret": MORNING_SECRET}
     response = requests.post(url, json=payload)
     response.raise_for_status()
-    return response.json()['jwt']
+    
+    data = response.json()
+    
+    # שליפת הטוקן בהתאם למפתח שהשרת מחזיר
+    if 'token' in data:
+        return data['token']
+    elif 'jwt' in data:
+        return data['jwt']
+    else:
+        # במקרה שפרטי ההתחברות שגויים, נדפיס את תשובת השרת ללוג
+        print("API Response Error:", data)
+        raise ValueError("Token not found in response. Please verify MORNING_ID and MORNING_SECRET in GitHub Secrets.")
 
 def fetch_morning_data(token):
     # משיכת מסמכים מהשנה האחרונה (אפשר לשנות תאריכים לפי הצורך)
