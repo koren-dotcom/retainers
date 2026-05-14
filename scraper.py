@@ -14,7 +14,7 @@ SPREADSHEET_URL = 'https://docs.google.com/spreadsheets/d/1_JbtThIfDSDpKW1gd5jNB
 WORKSHEET_NAME = 'Retainers Dashboard' 
 
 # --- ניהול סטטוסים ידני (תעדכן כאן שמות בדיוק כמו שהם מופיעים בשיטס) ---
-FROZEN_CLIENTS = [] 
+FROZEN_CLIENTS = ['Qubex'] 
 EXPIRED_CLIENTS = [] 
 
 def get_morning_token():
