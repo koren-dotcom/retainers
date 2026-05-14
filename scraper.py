@@ -9,7 +9,7 @@ from datetime import datetime
 MORNING_ID = os.environ.get('MORNING_ID')
 MORNING_SECRET = os.environ.get('MORNING_SECRET')
 GOOGLE_CREDENTIALS_FILE = 'google_secret.json' # בגיטהאב נייצר את זה דינמית, מקומית שים את הקובץ פה
-SPREADSHEET_URL = 'כאן_שים_את_הלינק_לגוגל_שיטס_שלך'
+SPREADSHEET_URL = 'https://docs.google.com/spreadsheets/d/1_JbtThIfDSDpKW1gd5jNBFAp6bV0-pVntVJLqNbczIw/edit?gid=0#gid=0'
 WORKSHEET_NAME = 'דשבורד לקוחות ריטיינר'
 
 def get_morning_token():
