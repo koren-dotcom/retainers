@@ -31,31 +31,43 @@ def get_morning_token():
         raise ValueError("Token not found in response. Please verify MORNING_ID and MORNING_SECRET in GitHub Secrets.")
 
 def fetch_morning_data(token):
-    # משיכת מסמכים מהשנה האחרונה (אפשר לשנות תאריכים לפי הצורך)
-    url = "https://api.greeninvoice.co.il/api/v1/documents"
+    # הוספנו /search בסוף כדי לפנות לנתיב החיפוש הנכון
+    url = "https://api.greeninvoice.co.il/api/v1/documents/search"
     headers = {"Authorization": f"Bearer {token}"}
     
-    # חיפוש חשבוניות מס קבלה / חשבוניות מס
+    # חיפוש מ-2023 ועד סוף השנה הנוכחית
     payload = {
         "page": 1,
         "pageSize": 100,
-        "type": [305, 320], # סוגי מסמכים נפוצים להכנסות
+        "type": [320, 330], # 320: חשבונית מס, 330: חשבונית מס קבלה
         "date": {
-            "from": f"{datetime.now().year}-01-01", 
+            "from": "2023-01-01", 
             "to": f"{datetime.now().year}-12-31"
         }
     }
     
     all_docs = []
     while True:
-        res = requests.post(url, headers=headers, json=payload).json()
+        response = requests.post(url, headers=headers, json=payload)
+        
+        # אם יש שגיאה בבקשה, נדפיס אותה כדי לדעת למה נפל
+        if response.status_code != 200:
+            print(f"API Error {response.status_code}: {response.text}")
+            break
+            
+        res = response.json()
         if 'items' not in res or not res['items']:
             break
+            
         all_docs.extend(res['items'])
-        if res['page'] == res['pages']: # הגענו לעמוד האחרון
+        
+        # מנגנון המעבר בין עמודים (Pagination)
+        if res.get('page', 1) >= res.get('pages', 1):
             break
+            
         payload['page'] += 1
         
+    print(f"Found {len(all_docs)} documents!") # מדפיס את הכמות האמיתית שנמצאה
     return all_docs
 
 def process_data(docs):
