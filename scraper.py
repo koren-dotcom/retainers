@@ -26,7 +26,6 @@ def get_morning_token():
 def fetch_morning_data(token):
     url = "https://api.greeninvoice.co.il/api/v1/documents/search"
     headers = {"Authorization": f"Bearer {token}"}
-    # הוספנו סוג 305 (קבלה) כדי לוודא שכל העברה מ-2023 נתפסת
     payload = {
         "page": 1, "pageSize": 100, "type": [305, 320, 330],
         "date": {"from": "2023-06-01", "to": f"{datetime.now().year}-12-31"}
@@ -38,7 +37,7 @@ def fetch_morning_data(token):
         all_docs.extend(res['items'])
         if res.get('page', 1) >= res.get('pages', 1): break
         payload['page'] += 1
-    print(f"Found {len(all_docs)} documents.")
+    print(f"DEBUG: Found {len(all_docs)} documents.")
     return all_docs
 
 def fetch_retainer_statuses(token):
@@ -46,82 +45,65 @@ def fetch_retainer_statuses(token):
     headers = {"Authorization": f"Bearer {token}"}
     payload = {"page": 1, "pageSize": 100}
     statuses = {}
-    
     while True:
         res = requests.post(url, headers=headers, json=payload).json()
-        for item in res.get('items', []):
-            client_name = item.get('client', {}).get('name')
-            # 1=Active, 2=Paused, 3=Expired/Completed
+        items = res.get('items', [])
+        for item in items:
+            client_name = item.get('client', {}).get('name', '').strip()
             status_code = item.get('status')
             statuses[client_name] = status_code
-        
         if res.get('page', 1) >= res.get('pages', 1): break
         payload['page'] += 1
-        
+    print(f"DEBUG: Found {len(statuses)} retainers in Morning.")
     return statuses
 
 def process_data(docs, statuses):
-    if not docs: return pd.DataFrame()
-    
-    data = []
-    for doc in docs:
-        client_name = doc.get('client', {}).get('name', 'לקוח כללי')
-        data.append({
-            "Name": client_name,
-            "Month": f"{datetime.strptime(doc['documentDate'], '%Y-%m-%d').year}-{datetime.strptime(doc['documentDate'], '%Y-%m-%d').month:02d}-01",
-            "Amount": doc.get('amount', 0),
-            "Currency": doc.get('currency', 'ILS')
-        })
-    
-    df = pd.DataFrame(data)
-    agg_df = df.groupby(['Name', 'Month', 'Currency'])['Amount'].sum().reset_index()
-    
-    def format_val(row):
-        if row['Currency'] == 'USD': return f"${row['Amount']}"
-        if row['Currency'] == 'EUR': return f"€{row['Amount']}"
-        return row['Amount']
-    agg_df['Val'] = agg_df.apply(format_val, axis=1)
-
-    pivot_df = agg_df.pivot_table(index='Name', columns='Month', values='Val', aggfunc=lambda x: ' + '.join(map(str, x)) if len(x) > 1 else x.iloc[0])
-    
+    # 1. יצירת ציר זמן מלא מיוני 2023
     all_months = pd.date_range(start="2023-06-01", end=datetime.now(), freq='MS').strftime('%Y-%m-01').tolist()
-    pivot_df = pivot_df.reindex(columns=all_months).fillna("")
     
-    # הוספת סטטוס עם לוגיקה גמישה לשמות (strip להסרת רווחים מיותרים)
-    status_map = {1: 'פעיל', 2: 'מוקפא', 3: 'הסתיים'}
-    pivot_df.insert(0, 'Status', pivot_df.index.map(lambda x: status_map.get(statuses.get(x.strip()), 'לא מוגדר')))
-    pivot_df.reset_index(inplace=True)
+    # 2. עיבוד מסמכים
+    if docs:
+        doc_data = []
+        for doc in docs:
+            client_name = doc.get('client', {}).get('name', 'לקוח כללי').strip()
+            doc_data.append({
+                "Name": client_name,
+                "Month": f"{datetime.strptime(doc['documentDate'], '%Y-%m-%d').year}-{datetime.strptime(doc['documentDate'], '%Y-%m-%d').month:02d}-01",
+                "Amount": doc.get('amount', 0),
+                "Currency": doc.get('currency', 'ILS')
+            })
+        df_docs = pd.DataFrame(doc_data)
+        
+        def format_val(row):
+            if row['Currency'] == 'USD': return f"${row['Amount']}"
+            if row['Currency'] == 'EUR': return f"€{row['Amount']}"
+            return row['Amount']
+        df_docs['Val'] = df_docs.apply(format_val, axis=1)
+        
+        pivot_df = df_docs.pivot_table(index='Name', columns='Month', values='Val', aggfunc=lambda x: ' + '.join(map(str, x)) if len(x) > 1 else x.iloc[0])
+    else:
+        pivot_df = pd.DataFrame(index=list(statuses.keys()))
 
-    # --- מיון מותאם אישית ---
-    # דירוג: פעיל=1, מוקפא=2, הסתיים=3, לא מוגדר=4
+    # 3. איחוד לקוחות (מסמכים + ריטיינרים) כדי לוודא שכולם מופיעים
+    all_clients = set(pivot_df.index).union(set(statuses.keys()))
+    pivot_df = pivot_df.reindex(index=list(all_clients), columns=all_months).fillna("")
+    
+    # 4. הוספת סטטוס ומיון
+    status_map = {1: 'פעיל', 2: 'מוקפא', 3: 'הסתיים'}
+    pivot_df.insert(0, 'Status', [status_map.get(statuses.get(name, 0), 'לא מוגדר') for name in pivot_df.index])
+    pivot_df.reset_index(inplace=True)
+    pivot_df.rename(columns={'index': 'Name'}, inplace=True)
+
     rank_map = {'פעיל': 1, 'מוקפא': 2, 'הסתיים': 3, 'לא מוגדר': 4}
     pivot_df['rank'] = pivot_df['Status'].map(rank_map)
-    
-    # מיון לפי הדירוג ואז אלפבתי לפי שם הלקוח
     pivot_df = pivot_df.sort_values(by=['rank', 'Name']).drop(columns=['rank'])
     
     return pivot_df
 
-def apply_formatting(worksheet, df):
-    colors = {
-        'פעיל': Color(0.717, 0.882, 0.804),   # ירוק
-        'מוקפא': Color(0.956, 0.780, 0.764),  # אדום/ורוד
-        'הסתיים': Color(0.937, 0.937, 0.937)  # אפור
-    }
-    
-    fmt_rules = []
-    for i, row in df.iterrows():
-        status = row['Status']
-        if status in colors:
-            row_idx = i + 2 # שורה 1 היא כותרת
-            # צביעה של כל השורה (עד עמודה Z לביטחון)
-            fmt_rules.append((f"A{row_idx}:Z{row_idx}", cellFormat(backgroundColor=colors[status])))
-    
-    if fmt_rules:
-        batch_format(worksheet, fmt_rules)
-
 def update_google_sheets(df):
-    if df.empty: return
+    if df.empty:
+        print("DEBUG: No data to update.")
+        return
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     creds = ServiceAccountCredentials.from_json_keyfile_name(GOOGLE_CREDENTIALS_FILE, scope)
     client = gspread.authorize(creds)
@@ -130,11 +112,25 @@ def update_google_sheets(df):
     
     worksheet.clear()
     worksheet.update([df.columns.values.tolist()] + df.values.tolist())
-    apply_formatting(worksheet, df)
-    print("Dashboard updated and sorted successfully.")
+    
+    # צביעה - טווח רחב יותר (A עד AZ)
+    colors = {
+        'פעיל': Color(0.717, 0.882, 0.804),
+        'מוקפא': Color(0.956, 0.780, 0.764),
+        'הסתיים': Color(0.937, 0.937, 0.937)
+    }
+    fmt_rules = []
+    for i, row in df.iterrows():
+        status = row['Status']
+        if status in colors:
+            row_idx = i + 2
+            fmt_rules.append((f"A{row_idx}:AZ{row_idx}", cellFormat(backgroundColor=colors[status])))
+    
+    if fmt_rules:
+        batch_format(worksheet, fmt_rules)
+    print(f"DEBUG: Successfully updated {len(df)} rows at {datetime.now()}.")
 
 def main():
-    print("Starting sync...")
     token = get_morning_token()
     docs = fetch_morning_data(token)
     statuses = fetch_retainer_statuses(token)
