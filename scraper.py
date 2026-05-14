@@ -5,18 +5,34 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime
 
-# --- הגדרות משתני סביבה (לא להכניס מפתחות ישירות לקוד!) ---
+# --- הגדרות ---
 MORNING_ID = os.environ.get('MORNING_ID')
 MORNING_SECRET = os.environ.get('MORNING_SECRET')
-GOOGLE_CREDENTIALS_FILE = 'google_secret.json' # בגיטהאב נייצר את זה דינמית, מקומית שים את הקובץ פה
-SPREADSHEET_URL = 'https://docs.google.com/spreadsheets/d/1_JbtThIfDSDpKW1gd5jNBFAp6bV0-pVntVJLqNbczIw/edit?gid=0#gid=0'
-WORKSHEET_NAME = 'Retainers Dashboard'
+GOOGLE_CREDENTIALS_FILE = 'google_secret.json'
+
+# הכנס כאן את הלינק ואת שם הלשונית
+SPREADSHEET_URL = 'https://docs.google.com/spreadsheets/d/1_JbtThIfDSDpKW1gd5jNBFAp6bV0-pVntVJLqNbczIw/edit?gid=0#gid=0' 
+WORKSHEET_NAME = 'Retainers Dashboard' 
+
+def get_morning_token():
+    url = "https://api.greeninvoice.co.il/api/v1/account/token"
+    payload = {"id": MORNING_ID, "secret": MORNING_SECRET}
+    response = requests.post(url, json=payload)
+    response.raise_for_status()
+    
+    data = response.json()
+    if 'token' in data:
+        return data['token']
+    elif 'jwt' in data:
+        return data['jwt']
+    else:
+        print("API Response Error:", data)
+        raise ValueError("Token not found in response.")
 
 def fetch_morning_data(token):
     url = "https://api.greeninvoice.co.il/api/v1/documents/search"
     headers = {"Authorization": f"Bearer {token}"}
     
-    # חיפוש מתאריך 01/06/2023
     payload = {
         "page": 1,
         "pageSize": 100,
@@ -56,7 +72,7 @@ def process_data(docs):
     for doc in docs:
         client_name = doc.get('client', {}).get('name', 'לקוח כללי')
         amount = doc.get('amount', 0)
-        currency = doc.get('currency', 'ILS') # זיהוי המטבע
+        currency = doc.get('currency', 'ILS')
         date_str = doc.get('documentDate') 
         
         doc_date = datetime.strptime(date_str, '%Y-%m-%d')
@@ -66,10 +82,11 @@ def process_data(docs):
         
     df = pd.DataFrame(data)
     
-    # קיבוץ לפי לקוח, חודש ומטבע (למקרה שיש מספר חשבוניות באותו חודש)
+    if df.empty:
+        return pd.DataFrame()
+        
     agg_df = df.groupby(['Name', 'Month', 'Currency'])['Amount'].sum().reset_index()
     
-    # פונקציה להוספת סימן לדולרים/אירו, והשארת שקלים כמספר לטובת חישובים באקסל
     def format_currency(row):
         if row['Currency'] == 'USD':
             return f"${row['Amount']}"
@@ -79,48 +96,23 @@ def process_data(docs):
         
     agg_df['Formatted'] = agg_df.apply(format_currency, axis=1)
     
-    # פונקציית צבירה שמונעת הפיכת שקלים לטקסט אלא אם יש ערכים כפולים שונים
     def custom_agg(series):
         if len(series) == 1:
             return series.iloc[0]
         return ' + '.join(str(v) for v in series)
         
-    # יצירת טבלת ציר
     pivot_df = agg_df.pivot_table(index='Name', columns='Month', values='Formatted', aggfunc=custom_agg)
-    
-    # סידור העמודות משמאל לימין כרונולוגית ומילוי החללים הריקים במקום 0
     pivot_df = pivot_df.reindex(sorted(pivot_df.columns), axis=1)
     pivot_df = pivot_df.fillna("")
     pivot_df.reset_index(inplace=True)
     
     return pivot_df
 
-def process_data(docs):
-    if not docs:
-        return pd.DataFrame()
-        
-    # הוצאת דאטא רלוונטי
-    data = []
-    for doc in docs:
-        client_name = doc.get('client', {}).get('name', 'לקוח כללי')
-        amount = doc.get('amount', 0)
-        date_str = doc.get('documentDate') # מגיע בפורמט YYYY-MM-DD
-        
-        # המרה לתחילת החודש כדי שיתאים לעמודות באקסל שלך (למשל 2023-01-01)
-        doc_date = datetime.strptime(date_str, '%Y-%m-%d')
-        month_col = f"{doc_date.year}-{doc_date.month:02d}-01"
-        
-        data.append({"Name": client_name, "Month": month_col, "Amount": amount})
-        
-    df = pd.DataFrame(data)
-    
-    # יצירת טבלת ציר (Pivot) - שורות לקוחות, עמודות חודשים, סיכום סכומים
-    pivot_df = df.pivot_table(index='Name', columns='Month', values='Amount', aggfunc='sum', fill_value=0)
-    pivot_df.reset_index(inplace=True)
-    
-    return pivot_df
-
 def update_google_sheets(df):
+    if df.empty:
+        print("No data to update.")
+        return
+        
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     creds = ServiceAccountCredentials.from_json_keyfile_name(GOOGLE_CREDENTIALS_FILE, scope)
     client = gspread.authorize(creds)
@@ -128,7 +120,6 @@ def update_google_sheets(df):
     sheet = client.open_by_url(SPREADSHEET_URL)
     worksheet = sheet.worksheet(WORKSHEET_NAME)
     
-    # ניקוי הגיליון והכנסת הנתונים המעודכנים
     worksheet.clear()
     worksheet.update([df.columns.values.tolist()] + df.values.tolist())
     print("Google Sheet updated successfully!")
