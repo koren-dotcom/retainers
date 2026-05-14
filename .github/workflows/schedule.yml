@@ -1,0 +1,36 @@
+name: Monthly Invoice Sync
+
+on:
+  schedule:
+    # רץ כל 1 לחודש בשעה 04:00 בבוקר
+    - cron: '0 4 1 * *'
+  workflow_dispatch: # מאפשר לך להריץ ידנית דרך הממשק של גיטהאב מתי שתרצה
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Create Google Credentials File
+        run: |
+          echo "$GCP_CREDENTIALS" > google_secret.json
+        env:
+          GCP_CREDENTIALS: ${{ secrets.GCP_CREDENTIALS }}
+
+      - name: Run Scraper
+        env:
+          MORNING_ID: ${{ secrets.MORNING_ID }}
+          MORNING_SECRET: ${{ secrets.MORNING_SECRET }}
+        run: |
+          python scraper.py
