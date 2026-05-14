@@ -14,8 +14,8 @@ SPREADSHEET_URL = 'https://docs.google.com/spreadsheets/d/1_JbtThIfDSDpKW1gd5jNB
 WORKSHEET_NAME = 'Retainers Dashboard' 
 
 # --- ניהול סטטוסים ידני ---
-# פשוט תוסיף כאן שמות לקוחות. כל השאר יהיו "פעיל".
-FROZEN_CLIENTS = [] 
+# הכנס כאן שמות לקוחות כדי למיין ולתייג אותם
+FROZEN_CLIENTS = ['Qubex'] # דוגמה: ['Rotate']
 EXPIRED_CLIENTS = [] 
 
 def get_morning_token():
@@ -29,8 +29,9 @@ def get_morning_token():
 def fetch_morning_data(token):
     url = "https://api.greeninvoice.co.il/api/v1/documents/search"
     headers = {"Authorization": f"Bearer {token}"}
+    # הרחבנו את הסוגים כדי לא לפספס כלום (300, 305, 320, 330, 400)
     payload = {
-        "page": 1, "pageSize": 100, "type": [305, 320, 330],
+        "page": 1, "pageSize": 100, "type": [300, 305, 320, 330, 400],
         "date": {"from": "2023-06-01", "to": f"{datetime.now().year}-12-31"}
     }
     all_docs = []
@@ -40,6 +41,7 @@ def fetch_morning_data(token):
         all_docs.extend(res['items'])
         if res.get('page', 1) >= res.get('pages', 1): break
         payload['page'] += 1
+    print(f"DEBUG: Found {len(all_docs)} documents.")
     return all_docs
 
 def process_data(docs):
@@ -77,7 +79,6 @@ def process_data(docs):
     pivot_df.reset_index(inplace=True)
     pivot_df.rename(columns={'index': 'Name'}, inplace=True)
 
-    # מיון לפי סטטוס (פעיל ראשון) ואז שם
     rank_map = {'פעיל': 1, 'מוקפא': 2, 'הסתיים': 3}
     pivot_df['rank'] = pivot_df['Status'].map(rank_map)
     pivot_df = pivot_df.sort_values(by=['rank', 'Name']).drop(columns=['rank'])
@@ -93,9 +94,8 @@ def update_google_sheets(df):
     worksheet = sheet.worksheet(WORKSHEET_NAME)
     
     worksheet.clear()
-    # כתיבת נתונים נקייה
     worksheet.update([df.columns.values.tolist()] + df.values.tolist())
-    print(f"Done. Updated {len(df)} rows.")
+    print(f"Successfully updated {len(df)} rows.")
 
 def main():
     token = get_morning_token()
